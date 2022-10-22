@@ -639,7 +639,7 @@ void comp_P(){
 void updateIndex(){ //HTML probado en https://jsfiddle.net/
   measurements =
   "<meta charset='UTF-8'>"
-  "<h1 align='center'>Estación meteorológica Granada</h1>"
+  "<h1 align='center'>Estación meteorológica</h1>"
   "<table align='center' width='25%' bgcolor='99ccff' border='1px solid black'><tr><th>Variables</th><th>Valores</th></tr>"
   "<tr><td>Temperatura interior: </td><td align='center'>"
   ;
