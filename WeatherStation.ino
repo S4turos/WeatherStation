@@ -104,6 +104,8 @@ unsigned long previousTS = 0UL;
 unsigned long pScreen = 0UL;
 unsigned long temperatureAlert = 600000UL; // periodo refractario del aviso de la subida de temperatura (10 minutos)
 unsigned long pTempAlert = 0UL;
+unsigned long intervalWiFi = 60000UL; // intervalo de checkeo de la conexión WiFi (1 minuto)
+unsigned long checkWiFi = 0UL;
 
 //WIFI
 /*Put your SSID & Password*/
@@ -124,13 +126,13 @@ const int lcdLightPin =  33;    // the number of the light pin of the LCD
 const byte ROWS = 4;// Filas
 const byte COLS = 4;// Columnas
 char keys[ROWS][COLS]={
-  {'1','5','9','13'},
-  {'2','6','10','14'},
-  {'3','7','11','15'},
-  {'4','8','12','16'}
+  {'1','5','9','D'},
+  {'2','6','A','E'},
+  {'3','7','B','F'},
+  {'4','8','C','G'}
 };
-byte rowPins[ROWS] = {15,2,0,4};
-byte colPins[COLS] = {16,17,5,18};
+byte colPins[ROWS] = {16,17,5,18};
+byte rowPins[COLS] = {15,2,0,4};
 
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 char screen = '1';//por defecto 1, la pantalla de inicio
@@ -173,7 +175,9 @@ void setup() {
   initBME280();
   //calibrateMQ135();
   startMQ135();
-  initWiFi();
+  if(autoconnect){
+    initWiFi();
+  }
   sendMessage("Se reinició el microcontrolador");
   ThingSpeak.begin(client); // Initialize ThingSpeak
   APIcall(urlG);
@@ -195,7 +199,9 @@ void setup() {
 
 void loop() {
   char key = keypad.getKey(); //constantemente está leyendo la entrada del teclado
-  if ((key != NO_KEY && key != screen) || key == '6'){//se ejecutra el código si detecta una tecla y distinta a la que está por defecto
+  if ((key != NO_KEY && key != screen) || key == '6' || key == '9' || screen == 'A'){
+    Serial.print("Tecla pulsada: ");
+    Serial.println(key);
     printLCD(key);
   }
   unsigned long currentMillis = millis(); //milisegundos desde que se inició el sketch
@@ -206,7 +212,7 @@ void loop() {
 
     if(currentMillis - pScreen > intScreen){
       getData();
-      if(screen == '1' || screen == '2' || screen == '4' || screen == '7'){//actualización de pantalla
+      if(screen == '1' || screen == '2' || screen == '4' || screen == '5' || screen == '7'){//actualización datos de pantalla
         printLCD(screen);
       }
       updateIndex(); //Se actualiza la página web
@@ -251,8 +257,18 @@ void loop() {
     previousCompP = currentMillis;
   }
 
-  server.handleClient();
-  delay(1);
+  if(WiFi.status() == WL_CONNECTED){
+    server.handleClient();
+    //delay(1);
+  }
+
+  if(autoconnect && (currentMillis - checkWiFi > intervalWiFi)){
+    if(WiFi.status() != WL_CONNECTED){
+      initWiFi();
+      initServer();
+    }
+    checkWiFi = currentMillis;
+  }
 
 }
 
@@ -378,8 +394,6 @@ void initServer(){
  }
 
  void printLCD(char k){
-    //Serial.print("Input recogido: ");
-    //Serial.println(k);
 
     switch(k){
 
@@ -594,6 +608,20 @@ void initServer(){
           lcd.print("Conectando WiFi");
           initWiFi();
           initServer();
+        }
+        screen = k;
+        break;
+
+      case 'A':
+        
+        if(autoconnect){
+          lcd.clear();
+          lcd.print("No autoconectar");
+          autoconnect = false;
+        }else{
+          lcd.clear();
+          lcd.print("Autoconectar");
+          autoconnect = true;
         }
         screen = k;
         break;
@@ -912,7 +940,7 @@ void printLocalTime(){ //https://randomnerdtutorials.com/esp32-date-time-ntp-cli
   actualMin = atoi(timeMin);
 
   if(actualMin != checkMin){
-    Serial.println("Se actualiza el reloj");
+    //Serial.println("Se actualiza el reloj");
     lcd.clear();
     lcd.print(&timeinfo, "%R %a %d/%m");
     lcd.setCursor(0, 1);

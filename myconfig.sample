@@ -23,6 +23,7 @@ String chatID = "your Telegram chat ID";
 
 bool LCDlight = true; //true: pantalla encendida al inicio   false: pantalla apagada al inicio
 bool uploadTS = true; //true: sube a ThingSpeak desde el inicio  false: lo contrario
+bool autoconnect = true; //true: conectar a la red WiFi automáticamente, incluso perdiendo la conexión
 
 unsigned long intSensors = 1000UL; //intervalo entre lecturas de los sensores (1 segundo)
 unsigned long compTH = 180000UL; //intervalo entre comparaciones de temperatura y humedad (3 minutos)
