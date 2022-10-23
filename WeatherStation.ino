@@ -625,9 +625,9 @@ void comp_P(){
   }else if (difference <= -steepP * seconds){ //caída brusca de presión
     tPres = 5;
     lowPressure += 1;
-    if(lowPressure == 2){
+    /*if(lowPressure == 2){
       sendMessage("Se ha detectado una caída brusca de la presión atmosférica");
-    }
+    }*/
   }else{
     tPres = 3;
     lowPressure = 0;
