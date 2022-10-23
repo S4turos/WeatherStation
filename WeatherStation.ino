@@ -102,6 +102,8 @@ unsigned long previousSecond = 0UL;
 unsigned long pSensors = 0UL;
 unsigned long previousTS = 0UL;
 unsigned long pScreen = 0UL;
+unsigned long temperatureAlert = 600000UL; // periodo refractario del aviso de la subida de temperatura (10 minutos)
+unsigned long pTempAlert = 0UL;
 
 //WIFI
 /*Put your SSID & Password*/
@@ -585,7 +587,10 @@ void comp_TH(){
     tTemperature = 2;
   }else if (differenceT >= steepT * seconds){ //subida brusca de la temperatura
     tTemperature = 4;
-    sendMessage("Se ha detectado una subida brusca de la temperatura interior");
+    if(pTempAlert == 0 || (millis() - pTempAlert > temperatureAlert)){
+      sendMessage("Se ha detectado una subida brusca de la temperatura interior");
+      pTempAlert = millis(); //se activa el periodo refractario
+    }
   }else if (differenceT <= -steepT * seconds){
     tTemperature = 5;
   }else{
