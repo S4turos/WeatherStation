@@ -88,6 +88,9 @@ const char* serverIndex =
 BME280I2C bme;
 float outsideTemp; //temperatura exterior para realizar comparaciones
 
+bool preheating = true;
+unsigned int preheatingMQ = 30000; //milisegundos de precalentamiento del sensor MQ135 (30 segundos)
+
 //INTERVALOS
 unsigned long previousMillis = 0UL;
 unsigned long previousCompTH = 0UL;
@@ -99,6 +102,10 @@ unsigned long previousSecond = 0UL;
 unsigned long pSensors = 0UL;
 unsigned long previousTS = 0UL;
 unsigned long pScreen = 0UL;
+unsigned long temperatureAlert = 600000UL; // periodo refractario del aviso de la subida de temperatura (10 minutos)
+unsigned long pTempAlert = 0UL;
+unsigned long intervalWiFi = 60000UL; // intervalo de checkeo de la conexión WiFi (1 minuto)
+unsigned long checkWiFi = 0UL;
 
 //WIFI
 /*Put your SSID & Password*/
@@ -119,13 +126,13 @@ const int lcdLightPin =  33;    // the number of the light pin of the LCD
 const byte ROWS = 4;// Filas
 const byte COLS = 4;// Columnas
 char keys[ROWS][COLS]={
-  {'1','5','9','13'},
-  {'2','6','10','14'},
-  {'3','7','11','15'},
-  {'4','8','12','16'}
+  {'1','5','9','D'},
+  {'2','6','A','E'},
+  {'3','7','B','F'},
+  {'4','8','C','G'}
 };
-byte rowPins[ROWS] = {15,2,0,4};
-byte colPins[COLS] = {16,17,5,18};
+byte colPins[ROWS] = {16,17,5,18};
+byte rowPins[COLS] = {15,2,0,4};
 
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 char screen = '1';//por defecto 1, la pantalla de inicio
@@ -168,7 +175,9 @@ void setup() {
   initBME280();
   //calibrateMQ135();
   startMQ135();
-  initWiFi();
+  if(autoconnect){
+    initWiFi();
+  }
   sendMessage("Se reinició el microcontrolador");
   ThingSpeak.begin(client); // Initialize ThingSpeak
   APIcall(urlG);
@@ -190,7 +199,9 @@ void setup() {
 
 void loop() {
   char key = keypad.getKey(); //constantemente está leyendo la entrada del teclado
-  if ((key != NO_KEY && key != screen) || key == '6'){//se ejecutra el código si detecta una tecla y distinta a la que está por defecto
+  if ((key != NO_KEY && key != screen) || key == '6' || key == '9' || screen == 'A'){
+    Serial.print("Tecla pulsada: ");
+    Serial.println(key);
     printLCD(key);
   }
   unsigned long currentMillis = millis(); //milisegundos desde que se inició el sketch
@@ -201,7 +212,7 @@ void loop() {
 
     if(currentMillis - pScreen > intScreen){
       getData();
-      if(screen == '1' || screen == '2' || screen == '4' || screen == '7'){//actualización de pantalla
+      if(screen == '1' || screen == '2' || screen == '4' || screen == '5' || screen == '7'){//actualización datos de pantalla
         printLCD(screen);
       }
       updateIndex(); //Se actualiza la página web
@@ -215,7 +226,7 @@ void loop() {
     previousAPI = currentMillis;
   }
 
-  if(currentMillis - previousTS > intervalTS){//se suben los datos  TS
+  if(currentMillis - previousTS > intervalTS){//se suben los datos a TS
 
     if(uploadTS){
       getData();
@@ -223,6 +234,9 @@ void loop() {
     }
 
     resetCounter();
+    if(preheating && (currentMillis > preheatingMQ)){
+      preheating = false; //en el siguiente ciclo ya se harán los cálculos para subir los datos del sensor MQ135
+    }
     previousTS = currentMillis;
 
   }
@@ -243,8 +257,18 @@ void loop() {
     previousCompP = currentMillis;
   }
 
-  server.handleClient();
-  delay(1);
+  if(WiFi.status() == WL_CONNECTED){
+    server.handleClient();
+    //delay(1);
+  }
+
+  if(autoconnect && (currentMillis - checkWiFi > intervalWiFi)){
+    if(WiFi.status() != WL_CONNECTED){
+      initWiFi();
+      initServer();
+    }
+    checkWiFi = currentMillis;
+  }
 
 }
 
@@ -254,13 +278,20 @@ void initWiFi() {
   Serial.println(ssid);
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi ..");
-  while (WiFi.status() != WL_CONNECTED) {
+  for(int i = 0; i < 20; i++){
+
+    if(WiFi.status() == WL_CONNECTED){
+      Serial.println("WiFi connected..!");
+      Serial.println(WiFi.localIP());
+      Serial.println(WiFi.macAddress());
+      break;
+    }
     Serial.print('.');
     delay(500);
   }
-  Serial.println("WiFi connected..!");
-  Serial.println(WiFi.localIP());
-  Serial.println(WiFi.macAddress());
+  
+  Serial.print("Failed to connect to ");
+  Serial.println(ssid);
 }
 
 void initBME280 (){
@@ -287,75 +318,82 @@ void initBME280 (){
 
 void uploadThingSpeak(){
 
-  ThingSpeak.setField(1, temperature);
-  ThingSpeak.setField(2, humidity);
-  ThingSpeak.setField(3, pressure);
-  ThingSpeak.setField(4, seaLevelPres);
-  ThingSpeak.setField(5, dewPoint);
-  ThingSpeak.setField(6, CO2);
-  ThingSpeak.setField(7, cont);
-  ThingSpeak.setField(8, ilum);
+  if(WiFi.status()== WL_CONNECTED){
+    ThingSpeak.setField(1, temperature);
+    ThingSpeak.setField(2, humidity);
+    ThingSpeak.setField(3, pressure);
+    ThingSpeak.setField(4, seaLevelPres);
+    ThingSpeak.setField(5, dewPoint);
+    if(!preheating){
+      ThingSpeak.setField(6, CO2);
+      ThingSpeak.setField(7, cont);
+    }
+    ThingSpeak.setField(8, ilum);
 
-  // write to the ThingSpeak channel
-  int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
-  if(x == 200){
-    Serial.println("ThingSpeak: channel update successful.");
-    Serial.println();
+    // write to the ThingSpeak channel
+    int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+    if(x == 200){
+      Serial.println("ThingSpeak: channel update successful.");
+      Serial.println();
+    }
+    else{
+      Serial.println("Problem updating channel. HTTP error code " + String(x));
+    }
   }
-  else{
-    Serial.println("Problem updating channel. HTTP error code " + String(x));
-  }
+
  }
 
 void initServer(){
-   /*use mdns for host name resolution*/
-  if (!MDNS.begin(host)) { //http://esp32.local
-    Serial.println("Error setting up MDNS responder!");
-    while (1) {
-      delay(1000);
+
+  if(WiFi.status()== WL_CONNECTED){
+    /*use mdns for host name resolution*/
+    if (!MDNS.begin(host)) { //http://esp32.local
+      Serial.println("Error setting up MDNS responder!");
+      while (1) {
+        delay(1000);
+      }
     }
+    Serial.println("mDNS responder started");
+    /*return index page which is stored in serverIndex */
+    server.on("/", HTTP_GET, []() {
+      server.sendHeader("Connection", "close");
+      server.send(200, "text/html", measurements);
+    });
+    server.on("/updateCode", HTTP_GET, []() {
+      server.sendHeader("Connection", "close");
+      server.send(200, "text/html", serverIndex);
+    });
+    /*handling uploading firmware file */
+    server.on("/update", HTTP_POST, []() {
+      server.sendHeader("Connection", "close");
+      server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+      ESP.restart();
+    }, []() {
+      HTTPUpload& upload = server.upload();
+      if (upload.status == UPLOAD_FILE_START) {
+        Serial.printf("Update: %s\n", upload.filename.c_str());
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { //start with max available size
+          Update.printError(Serial);
+        }
+      } else if (upload.status == UPLOAD_FILE_WRITE) {
+        /* flashing firmware to ESP*/
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+          Update.printError(Serial);
+        }
+      } else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) { //true to set the size to the current progress
+          Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+        } else {
+          Update.printError(Serial);
+        }
+      }
+    });
+    server.begin();
   }
-  Serial.println("mDNS responder started");
-  /*return index page which is stored in serverIndex */
-  server.on("/", HTTP_GET, []() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/html", measurements);
-  });
-  server.on("/updateCode", HTTP_GET, []() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/html", serverIndex);
-  });
-  /*handling uploading firmware file */
-  server.on("/update", HTTP_POST, []() {
-    server.sendHeader("Connection", "close");
-    server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
-    ESP.restart();
-  }, []() {
-    HTTPUpload& upload = server.upload();
-    if (upload.status == UPLOAD_FILE_START) {
-      Serial.printf("Update: %s\n", upload.filename.c_str());
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { //start with max available size
-        Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_WRITE) {
-      /* flashing firmware to ESP*/
-      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        Update.printError(Serial);
-      }
-    } else if (upload.status == UPLOAD_FILE_END) {
-      if (Update.end(true)) { //true to set the size to the current progress
-        Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
-      } else {
-        Update.printError(Serial);
-      }
-    }
-  });
-  server.begin();
+
  }
 
  void printLCD(char k){
-    //Serial.print("Input recogido: ");
-    //Serial.println(k);
 
     switch(k){
 
@@ -477,7 +515,7 @@ void initServer(){
         //Serial.println("Escribiendo pantalla 5");
         lcd.clear();
         if (WiFi.status() != WL_CONNECTED) {
-          lcd.print("No conectado");
+          lcd.print("Offline");
         }else{
           lcd.print(ssid);
           lcd.setCursor(0, 1);
@@ -557,6 +595,37 @@ void initServer(){
         }
         break;
 
+      case '9':
+        
+        if(WiFi.status()== WL_CONNECTED){
+          lcd.clear();
+          lcd.print("Desconectando");
+          lcd.setCursor(0, 1);
+          lcd.print("WiFi");
+          WiFi.disconnect();
+        }else{
+          lcd.clear();
+          lcd.print("Conectando WiFi");
+          initWiFi();
+          initServer();
+        }
+        screen = k;
+        break;
+
+      case 'A':
+        
+        if(autoconnect){
+          lcd.clear();
+          lcd.print("No autoconectar");
+          autoconnect = false;
+        }else{
+          lcd.clear();
+          lcd.print("Autoconectar");
+          autoconnect = true;
+        }
+        screen = k;
+        break;
+
       default:
         Serial.println("Boton no programado");
         break;
@@ -577,7 +646,10 @@ void comp_TH(){
     tTemperature = 2;
   }else if (differenceT >= steepT * seconds){ //subida brusca de la temperatura
     tTemperature = 4;
-    sendMessage("Se ha detectado una subida brusca de la temperatura interior");
+    if(pTempAlert == 0 || (millis() - pTempAlert > temperatureAlert)){
+      sendMessage("Se ha detectado una subida brusca de la temperatura interior");
+      pTempAlert = millis(); //se activa el periodo refractario
+    }
   }else if (differenceT <= -steepT * seconds){
     tTemperature = 5;
   }else{
@@ -637,160 +709,162 @@ void comp_P(){
 }
 
 void updateIndex(){ //HTML probado en https://jsfiddle.net/
-  measurements =
-  "<meta charset='UTF-8'>"
-  "<h1 align='center'>Estación meteorológica</h1>"
-  "<table align='center' width='25%' bgcolor='99ccff' border='1px solid black'><tr><th>Variables</th><th>Valores</th></tr>"
-  "<tr><td>Temperatura interior: </td><td align='center'>"
-  ;
-  measurements += String(temperature,1);
-  switch (tTemperature){
-    case 1: // ligero ascenso
-      measurements += " ºC &uarr;</td></tr>";
-      break;
+  if(WiFi.status()== WL_CONNECTED){
+    measurements =
+    "<meta charset='UTF-8'>"
+    "<h1 align='center'>Estación meteorológica</h1>"
+    "<table align='center' width='25%' bgcolor='99ccff' border='1px solid black'><tr><th>Variables</th><th>Valores</th></tr>"
+    "<tr><td>Temperatura interior: </td><td align='center'>"
+    ;
+    measurements += String(temperature,1);
+    switch (tTemperature){
+      case 1: // ligero ascenso
+        measurements += " ºC &uarr;</td></tr>";
+        break;
 
-    case 2: // ligera caída
-      measurements += " ºC &darr;</td></tr>";
-      break;
+      case 2: // ligera caída
+        measurements += " ºC &darr;</td></tr>";
+        break;
 
-    case 3: // igual
-      measurements += " ºC =</td></tr>";
-      break;
+      case 3: // igual
+        measurements += " ºC =</td></tr>";
+        break;
 
-    case 4: //subida brusca
-      measurements += " ºC &uarr;&uarr;</td></tr>";
-      break;
+      case 4: //subida brusca
+        measurements += " ºC &uarr;&uarr;</td></tr>";
+        break;
 
-    case 5: //descenso brusco
-      measurements += " ºC &darr;&darr;</td></tr>";
-      break;
-    default:
-      measurements += " ºC</td></tr>";
-      break;
+      case 5: //descenso brusco
+        measurements += " ºC &darr;&darr;</td></tr>";
+        break;
+      default:
+        measurements += " ºC</td></tr>";
+        break;
+    }
+    measurements += "<tr><td>Índice de calor:</td><td align='center'>";
+    measurements += String(heatIndex,1);
+    measurements +=
+    " ºC</td></tr>"
+    "<tr><td>Temperatura exterior:</td><td align='center'>"
+    ;
+    measurements += String(outsideTemp,1);
+    measurements +=
+    " ºC</td></tr>"
+    "<tr><td>Humedad relativa:</td><td align='center'>"
+    ;
+    measurements += String(humidity,0);
+    switch (tHumidity){
+      case 1: // ligero ascenso
+        measurements += "% &uarr;</td></tr>";
+        break;
+
+      case 2: // ligera caída
+        measurements += "% &darr;</td></tr>";
+        break;
+
+      case 3: // igual
+        measurements += "% =</td></tr>";
+        break;
+
+      case 4: //subida brusca
+        measurements += "% &uarr;&uarr;</td></tr>";
+        break;
+
+      case 5: //descenso brusco
+        measurements += "% &darr;&darr;</td></tr>";
+        break;
+
+      default:
+        measurements += "%</td></tr>";
+        break;
+    }
+    measurements += "<tr><td>Humedad absoluta:</td><td align='center'>";
+    measurements += String(absHumidity);
+    measurements += " g/m<sup>3</sup></td></tr>"
+    "<tr><td>Presión atmosférica:</td><td align='center'>"
+    ;
+    measurements += String(pressure,1);
+    measurements +=
+    " hPa</td></tr>"
+    "<tr><td>Presión atmosférica equivalente:</td><td align='center'>"
+    ;
+    measurements += String(seaLevelPres,1);
+    switch (tPres){
+      case 1: // ligero ascenso
+        measurements += " hPa &uarr;</td></tr>";
+        break;
+
+      case 2: // ligera caída
+        measurements += " hPa &darr;</td></tr>";
+        break;
+
+      case 3: // igual
+        measurements += " hPa =</td></tr>";
+        break;
+
+      case 4: //subida brusca
+        measurements += " hPa &uarr;&uarr;</td></tr>";
+        break;
+
+      case 5: //descenso brusco
+        measurements += " hPa &darr;&darr;</td></tr>";
+        break;
+
+      default:
+        measurements += " hPa</td></tr>";
+        break;
+    }
+    measurements += "<tr><td>Punto de rocío:</td><td align='center'>";
+    measurements += String(dewPoint,1);
+    measurements +=
+    " ºC</td></tr>"
+    "<tr><td>Altitud aproximada:</td><td align='center'>"
+    ;
+    measurements += String(altitude, 0);
+    measurements +=
+    " m<tr><td>Altitud real:</td><td align='center'>"
+    ;
+    measurements += String(realAltitude);
+    measurements +=
+    " m</td></tr>"
+    "<tr><td>Concentración de CO<sub>2</sub>:</td><td align='center'>"
+    ;
+    measurements += String(CO2, 0);
+    measurements +=
+    " ppm</td></tr>"
+    "<tr><td>Contaminación del aire:</td><td align='center'>";
+    measurements += String(cont);
+    measurements += "</td></tr>"
+    "<tr><td>Salida del Sol:</td><td align='center'>"
+    ;
+    setTime(salidaT);
+    measurements += hour();
+    measurements += ":";
+    measurements += minute();
+    measurements += "</td></tr>";
+    measurements += "<tr><td>Puesta del Sol:</td><td align='center'>"
+    ;
+    setTime(puestaT);
+    measurements += hour();
+    measurements += ":";
+    measurements += minute();
+    measurements += "</td></tr>";
+    measurements += "<tr><td>Iluminación:</td><td align='center'>";
+    measurements += String(ilum);
+    measurements += "</td></tr>";
+
+    measurements +=
+    "<script>"
+      "window.setInterval('refresh()', "
+    ;
+    measurements += String(upIndex);
+    measurements += ");"
+      "function refresh() {"
+        "window .location.reload();"
+      "}"
+    "</script>"
+    ;
   }
-  measurements += "<tr><td>Índice de calor:</td><td align='center'>";
-  measurements += String(heatIndex,1);
-  measurements +=
-  " ºC</td></tr>"
-  "<tr><td>Temperatura exterior:</td><td align='center'>"
-  ;
-  measurements += String(outsideTemp,1);
-  measurements +=
-  " ºC</td></tr>"
-  "<tr><td>Humedad relativa:</td><td align='center'>"
-  ;
-  measurements += String(humidity,0);
-  switch (tHumidity){
-    case 1: // ligero ascenso
-      measurements += "% &uarr;</td></tr>";
-      break;
-
-    case 2: // ligera caída
-      measurements += "% &darr;</td></tr>";
-      break;
-
-    case 3: // igual
-      measurements += "% =</td></tr>";
-      break;
-
-    case 4: //subida brusca
-      measurements += "% &uarr;&uarr;</td></tr>";
-      break;
-
-    case 5: //descenso brusco
-      measurements += "% &darr;&darr;</td></tr>";
-      break;
-
-    default:
-      measurements += "%</td></tr>";
-      break;
-  }
-  measurements += "<tr><td>Humedad absoluta:</td><td align='center'>";
-  measurements += String(absHumidity);
-  measurements += " g/m<sup>3</sup></td></tr>"
-  "<tr><td>Presión atmosférica:</td><td align='center'>"
-  ;
-  measurements += String(pressure,1);
-  measurements +=
-  " hPa</td></tr>"
-  "<tr><td>Presión atmosférica equivalente:</td><td align='center'>"
-  ;
-  measurements += String(seaLevelPres,1);
-  switch (tPres){
-    case 1: // ligero ascenso
-      measurements += " hPa &uarr;</td></tr>";
-      break;
-
-    case 2: // ligera caída
-      measurements += " hPa &darr;</td></tr>";
-      break;
-
-    case 3: // igual
-      measurements += " hPa =</td></tr>";
-      break;
-
-    case 4: //subida brusca
-      measurements += " hPa &uarr;&uarr;</td></tr>";
-      break;
-
-    case 5: //descenso brusco
-      measurements += " hPa &darr;&darr;</td></tr>";
-      break;
-
-    default:
-      measurements += " hPa</td></tr>";
-      break;
-  }
-  measurements += "<tr><td>Punto de rocío:</td><td align='center'>";
-  measurements += String(dewPoint,1);
-  measurements +=
-  " ºC</td></tr>"
-  "<tr><td>Altitud aproximada:</td><td align='center'>"
-  ;
-  measurements += String(altitude, 0);
-  measurements +=
-  " m<tr><td>Altitud real:</td><td align='center'>"
-  ;
-  measurements += String(realAltitude);
-  measurements +=
-  " m</td></tr>"
-  "<tr><td>Concentración de CO<sub>2</sub>:</td><td align='center'>"
-  ;
-  measurements += String(CO2, 0);
-  measurements +=
-  " ppm</td></tr>"
-  "<tr><td>Contaminación del aire:</td><td align='center'>";
-  measurements += String(cont);
-  measurements += "</td></tr>"
-  "<tr><td>Salida del Sol:</td><td align='center'>"
-  ;
-  setTime(salidaT);
-  measurements += hour();
-  measurements += ":";
-  measurements += minute();
-  measurements += "</td></tr>";
-  measurements += "<tr><td>Puesta del Sol:</td><td align='center'>"
-  ;
-  setTime(puestaT);
-  measurements += hour();
-  measurements += ":";
-  measurements += minute();
-  measurements += "</td></tr>";
-  measurements += "<tr><td>Iluminación:</td><td align='center'>";
-  measurements += String(ilum);
-  measurements += "</td></tr>";
-
-  measurements +=
-  "<script>"
-    "window.setInterval('refresh()', "
-  ;
-  measurements += String(upIndex);
-  measurements += ");"
-    "function refresh() {"
-      "window .location.reload();"
-    "}"
-  "</script>"
-  ;
 }
 
 void APIcall(String url){
@@ -866,7 +940,7 @@ void printLocalTime(){ //https://randomnerdtutorials.com/esp32-date-time-ntp-cli
   actualMin = atoi(timeMin);
 
   if(actualMin != checkMin){
-    Serial.println("Se actualiza el reloj");
+    //Serial.println("Se actualiza el reloj");
     lcd.clear();
     lcd.print(&timeinfo, "%R %a %d/%m");
     lcd.setCursor(0, 1);
