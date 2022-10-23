@@ -45,6 +45,8 @@ MQUnifiedsensor MQ135(Board, Voltage_Resolution, ADC_Bit_Resolution, Pin, Type);
 //ALERTAS POR CONTANIMACIÓN
 #define LEDpin (19)
 bool contaminado = false;
+unsigned long tempAlert = 600000UL;
+unsigned long pAlert = 0UL;
 
 void startMQ135() {
   //Set math model to calculate the PPM concentration and the value of constants
@@ -94,10 +96,11 @@ int getCont(){
   int V = analogRead(Pin);
   //Serial.print("Contaminacion: ");
   //Serial.println(V);
-  if(V >= 375 && !contaminado){
+  if(V >= 375 && !contaminado && (pAlert == 0 || (millis() - pAlert > tempAlert))){
     sendMessage("Habitación con mala calidad del aire, se recomienda ventilar");
     digitalWrite(LEDpin, HIGH);
     contaminado = true;
+    pAlert = millis(); //para activar el periodo refractario de 10 minutos
   }else if(V < 300 && contaminado){
     digitalWrite(LEDpin, LOW);
     contaminado = false;

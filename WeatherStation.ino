@@ -88,6 +88,9 @@ const char* serverIndex =
 BME280I2C bme;
 float outsideTemp; //temperatura exterior para realizar comparaciones
 
+bool preheating = true;
+unsigned int preheatingMQ = 30000; //milisegundos de precalentamiento del sensor MQ135 (30 segundos)
+
 //INTERVALOS
 unsigned long previousMillis = 0UL;
 unsigned long previousCompTH = 0UL;
@@ -215,7 +218,7 @@ void loop() {
     previousAPI = currentMillis;
   }
 
-  if(currentMillis - previousTS > intervalTS){//se suben los datos  TS
+  if(currentMillis - previousTS > intervalTS){//se suben los datos a TS
 
     if(uploadTS){
       getData();
@@ -223,6 +226,9 @@ void loop() {
     }
 
     resetCounter();
+    if(preheating && (currentMillis > preheatingMQ)){
+      preheating = false; //en el siguiente ciclo ya se harán los cálculos para subir los datos del sensor MQ135
+    }
     previousTS = currentMillis;
 
   }
@@ -292,8 +298,10 @@ void uploadThingSpeak(){
   ThingSpeak.setField(3, pressure);
   ThingSpeak.setField(4, seaLevelPres);
   ThingSpeak.setField(5, dewPoint);
-  ThingSpeak.setField(6, CO2);
-  ThingSpeak.setField(7, cont);
+  if(!preheating){
+    ThingSpeak.setField(6, CO2);
+    ThingSpeak.setField(7, cont);
+  }
   ThingSpeak.setField(8, ilum);
 
   // write to the ThingSpeak channel
