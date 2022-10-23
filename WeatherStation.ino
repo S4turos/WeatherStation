@@ -89,7 +89,7 @@ BME280I2C bme;
 float outsideTemp; //temperatura exterior para realizar comparaciones
 
 bool preheating = true;
-unsigned int preheatingMQ = 30000; //milisegundos de precalentamiento del sensor MQ135 (30 segundos)
+unsigned int preheatingMQ = 60000; //milisegundos de precalentamiento del sensor MQ135 (60 segundos)
 
 //INTERVALOS
 unsigned long previousMillis = 0UL;
@@ -157,6 +157,12 @@ float pressureC = 0.0;
 //const int B = 15;        //Resistencia a la luz (10 Lux) en KΩ
 //const int Rc = 10;       //Resistencia calibracion en KΩ
 const int LDRPin = 34;   //Pin del LDR
+
+//ALERTAS POR CONTANIMACIÓN
+#define LEDpin (19)
+bool contaminado = false;
+unsigned long tempAlert = 600000UL;
+unsigned long pAlert = 0UL;
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
@@ -289,7 +295,7 @@ void initWiFi() {
     Serial.print('.');
     delay(500);
   }
-  
+  Serial.println();
   Serial.print("Failed to connect to ");
   Serial.println(ssid);
 }
@@ -1016,6 +1022,18 @@ void getData(){
     humidity = humidityC / float(contar);
     pressure = pressureC / float(contar);
     calculations();
+
+    if(cont >= 375 && !contaminado && !preheating){
+      if(pAlert == 0 || (millis() - pAlert > tempAlert)){
+        sendMessage("Habitación con mala calidad del aire, se recomienda ventilar");
+        pAlert = millis(); //para activar el periodo refractario de 10 minutos
+      }
+      digitalWrite(LEDpin, HIGH);
+      contaminado = true;
+    }else if(cont < 325 && contaminado){
+      digitalWrite(LEDpin, LOW);
+      contaminado = false;
+    }
 
     Serial.print(F("Temperatura = "));
     Serial.print(temperature);
